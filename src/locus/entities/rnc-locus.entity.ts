@@ -1,5 +1,4 @@
 import { Entity, PrimaryColumn, Column, OneToMany } from 'typeorm';
-import { RncLocusMember } from './rnc-locus-member.entity';
 
 @Entity('rnc_locus')
 export class RncLocus {
@@ -30,6 +29,6 @@ export class RncLocus {
   @Column({ name: 'member_count', type: 'int', nullable: true })
   memberCount: number;
 
-  @OneToMany(() => RncLocusMember, (member) => member.locus)
-  locusMembers: RncLocusMember[];
+  @OneToMany('RncLocusMember', 'locus')
+  locusMembers: any[];
 }

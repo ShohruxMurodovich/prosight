@@ -1,127 +1,103 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, SelectQueryBuilder } from 'typeorm';
 import { RncLocus } from './entities/rnc-locus.entity';
 import { LocusQueryDto, SideloadOption } from './dto/locus-query.dto';
 import { UserRole } from '../auth/users.data';
 
 const LIMITED_REGION_IDS = [86118093, 86696489, 88186467];
 
+const SORT_FIELDS: Record<string, string> = {
+    id: 'rl.id',
+    assemblyId: 'rl.assemblyId',
+    locusStart: 'rl.locusStart',
+    locusStop: 'rl.locusStop',
+    memberCount: 'rl.memberCount',
+};
+
 @Injectable()
 export class LocusService {
     constructor(
         @InjectRepository(RncLocus)
-        private readonly locusRepository: Repository<RncLocus>,
+        private readonly locusRepo: Repository<RncLocus>,
     ) { }
 
-    async getLocus(
-        query: LocusQueryDto,
-        userRole: UserRole,
-    ): Promise<{ data: RncLocus[]; total: number; page: number; limit: number }> {
-        const {
-            id,
-            assemblyId,
-            regionId,
-            membershipStatus,
-            include,
-            page = 1,
-            limit = 1000,
-            sortBy = 'id',
-            sortOrder = 'ASC',
-        } = query;
-
-        // normal user cannot use sideloading
-        if (
-            userRole === UserRole.NORMAL &&
-            include === SideloadOption.LOCUS_MEMBERS
-        ) {
-            throw new ForbiddenException(
-                'Normal users are not allowed to use sideloading',
-            );
+    async getLocus(dto: LocusQueryDto, role: UserRole) {
+        if (role === UserRole.NORMAL && dto.include === SideloadOption.LOCUS_MEMBERS) {
+            throw new ForbiddenException('Sideloading is not available for your role');
         }
 
-        const qb = this.locusRepository.createQueryBuilder('rl');
-
-        // Determine if we need to join rnc_locus_members
-        const hasRegionFilter = Array.isArray(regionId) && regionId.length > 0;
-        const needsMemberJoin =
-            hasRegionFilter ||
-            !!membershipStatus ||
-            include === SideloadOption.LOCUS_MEMBERS ||
-            userRole === UserRole.LIMITED;
-
-        if (needsMemberJoin) {
-            if (
-                include === SideloadOption.LOCUS_MEMBERS &&
-                userRole === UserRole.ADMIN
-            ) {
-                // Left join and select member data for sideloading (admin only)
-                qb.leftJoinAndSelect('rl.locusMembers', 'rlm');
-            } else {
-                // Left join for filtering purposes only (no select)
-                qb.leftJoin('rl.locusMembers', 'rlm');
-            }
-        }
-
-        // ------ Filters from rl table ------
-        if (Array.isArray(id) && id.length > 0) {
-            qb.andWhere('rl.id IN (:...ids)', { ids: id });
-        }
-
-        if (assemblyId) {
-            qb.andWhere('rl.assemblyId = :assemblyId', { assemblyId });
-        }
-
-        // ------ Filters from rlm table ------
-        if (hasRegionFilter) {
-            qb.andWhere('rlm.regionId IN (:...regionIds)', { regionIds: regionId });
-        }
-
-        if (membershipStatus) {
-            qb.andWhere('rlm.membershipStatus = :membershipStatus', {
-                membershipStatus,
-            });
-        }
-
-        // ------ Limited user restriction ------
-        if (userRole === UserRole.LIMITED) {
-            qb.andWhere('rlm.regionId IN (:...limitedRegionIds)', {
-                limitedRegionIds: LIMITED_REGION_IDS,
-            });
-        }
-
-        // ------ Sorting ------
-        const sortFieldMap: Record<string, string> = {
-            id: 'rl.id',
-            assemblyId: 'rl.assemblyId',
-            locusStart: 'rl.locusStart',
-            locusStop: 'rl.locusStop',
-            memberCount: 'rl.memberCount',
-        };
-        const sortField = sortFieldMap[sortBy] ?? 'rl.id';
-        qb.orderBy(sortField, sortOrder as 'ASC' | 'DESC');
-
-        // ------ Pagination ------
-        const take = Math.min(limit, 1000);
-        const skip = (page - 1) * take;
-        qb.skip(skip).take(take);
-
-        // Use groupBy to avoid duplicates when joining without sideload
-        if (needsMemberJoin && include !== SideloadOption.LOCUS_MEMBERS) {
-            qb.groupBy('rl.id');
-        }
+        const qb = this.locusRepo.createQueryBuilder('rl');
+        this.applyJoins(qb, dto, role);
+        this.applyFilters(qb, dto, role);
+        this.applySortAndPagination(qb, dto);
 
         const [data, total] = await qb.getManyAndCount();
 
-        // Strip locusMembers when not sideloading
-        if (include !== SideloadOption.LOCUS_MEMBERS) {
-            data.forEach((locus) => {
-                // Cast through unknown to allow deletion of non-optional property
-                (locus as { locusMembers?: unknown }).locusMembers = undefined;
-                delete (locus as { locusMembers?: unknown }).locusMembers;
+        if (dto.include !== SideloadOption.LOCUS_MEMBERS) {
+            data.forEach((row) => {
+                delete (row as any).locusMembers;
             });
         }
 
-        return { data, total, page, limit: take };
+        const limit = Math.min(dto.limit ?? 1000, 1000);
+        return { data, total, page: dto.page ?? 1, limit };
+    }
+
+    private needsMemberJoin(dto: LocusQueryDto, role: UserRole): boolean {
+        return (
+            role === UserRole.LIMITED ||
+            dto.include === SideloadOption.LOCUS_MEMBERS ||
+            !!dto.membershipStatus ||
+            (Array.isArray(dto.regionId) && dto.regionId.length > 0)
+        );
+    }
+
+    private applyJoins(qb: SelectQueryBuilder<RncLocus>, dto: LocusQueryDto, role: UserRole) {
+        if (!this.needsMemberJoin(dto, role)) return;
+
+        if (dto.include === SideloadOption.LOCUS_MEMBERS && role === UserRole.ADMIN) {
+            qb.leftJoinAndSelect('rl.locusMembers', 'rlm');
+        } else {
+            qb.leftJoin('rl.locusMembers', 'rlm');
+        }
+    }
+
+    private applyFilters(qb: SelectQueryBuilder<RncLocus>, dto: LocusQueryDto, role: UserRole) {
+        if (Array.isArray(dto.id) && dto.id.length > 0) {
+            qb.andWhere('rl.id IN (:...ids)', { ids: dto.id });
+        }
+
+        if (dto.assemblyId) {
+            qb.andWhere('rl.assemblyId = :assemblyId', { assemblyId: dto.assemblyId });
+        }
+
+        if (Array.isArray(dto.regionId) && dto.regionId.length > 0) {
+            qb.andWhere('rlm.regionId IN (:...regionIds)', { regionIds: dto.regionId });
+        }
+
+        if (dto.membershipStatus) {
+            qb.andWhere('rlm.membershipStatus = :membershipStatus', {
+                membershipStatus: dto.membershipStatus,
+            });
+        }
+
+        if (role === UserRole.LIMITED) {
+            qb.andWhere('rlm.regionId IN (:...allowed)', { allowed: LIMITED_REGION_IDS });
+        }
+
+        if (this.needsMemberJoin(dto, role) && dto.include !== SideloadOption.LOCUS_MEMBERS) {
+            qb.groupBy('rl.id');
+        }
+    }
+
+    private applySortAndPagination(qb: SelectQueryBuilder<RncLocus>, dto: LocusQueryDto) {
+        const field = SORT_FIELDS[dto.sortBy ?? 'id'] ?? 'rl.id';
+        const order = (dto.sortOrder ?? 'ASC') as 'ASC' | 'DESC';
+        qb.orderBy(field, order);
+
+        const limit = Math.min(dto.limit ?? 1000, 1000);
+        const offset = ((dto.page ?? 1) - 1) * limit;
+        qb.skip(offset).take(limit);
     }
 }
