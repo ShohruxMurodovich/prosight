@@ -10,7 +10,7 @@ import { JwtStrategy } from './jwt.strategy';
         PassportModule,
         JwtModule.register({
             secret: process.env.JWT_SECRET || 'prosight-super-secret-jwt-key-2024',
-            signOptions: { expiresIn: 86400 }, // 24 hours in seconds
+            signOptions: { expiresIn: 86400 },
 
         }),
     ],

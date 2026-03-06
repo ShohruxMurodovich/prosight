@@ -17,8 +17,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
             secretOrKey: process.env.JWT_SECRET || 'prosight-super-secret-jwt-key-2024',
         });
     }
-
-    async validate(payload: JwtPayload) {
+    validate(payload: JwtPayload) {
         return { id: payload.sub, username: payload.username, role: payload.role };
     }
 }
