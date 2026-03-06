@@ -1,0 +1,27 @@
+# node_modules
+node_modules/
+dist/
+build/
+
+# Environment variables
+.env
+!.env.example
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Coverage
+coverage/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# NestJS
+*.js.map
