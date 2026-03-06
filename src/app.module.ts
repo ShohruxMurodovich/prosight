@@ -17,7 +17,7 @@ import { RncLocusMember } from './locus/entities/rnc-locus-member.entity';
       username: process.env.DB_USER || 'reader',
       password: process.env.DB_PASSWORD || 'NWDMCE5xdipIjRrp',
       entities: [RncLocus, RncLocusMember],
-      synchronize: false, // read-only DB — never sync
+      synchronize: false,
       ssl: false,
     }),
     AuthModule,
