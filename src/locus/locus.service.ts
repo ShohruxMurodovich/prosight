@@ -29,7 +29,6 @@ export class LocusService {
 
         const qb = this.locusRepo.createQueryBuilder('rl');
 
-        // only join when sideloading — filtering uses subqueries to avoid GROUP BY issues
         if (dto.include === SideloadOption.LOCUS_MEMBERS && role === UserRole.ADMIN) {
             qb.leftJoinAndSelect('rl.locusMembers', 'rlm');
         }
@@ -56,7 +55,6 @@ export class LocusService {
             qb.andWhere('rl.assemblyId = :assemblyId', { assemblyId: dto.assemblyId });
         }
 
-        // filter by regionId via subquery — avoids JOIN + GROUP BY duplicate row problem
         if (Array.isArray(dto.regionId) && dto.regionId.length > 0) {
             qb.andWhere(
                 'rl.id IN (SELECT lm.locus_id FROM rnc_locus_members lm WHERE lm.region_id IN (:...regionIds))',
@@ -71,7 +69,6 @@ export class LocusService {
             );
         }
 
-        // limited role: always restrict to allowed region IDs
         if (role === UserRole.LIMITED) {
             qb.andWhere(
                 'rl.id IN (SELECT lm.locus_id FROM rnc_locus_members lm WHERE lm.region_id IN (:...allowed))',
