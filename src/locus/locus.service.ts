@@ -28,39 +28,23 @@ export class LocusService {
         }
 
         const qb = this.locusRepo.createQueryBuilder('rl');
-        this.applyJoins(qb, dto, role);
+
+        // only join when sideloading — filtering uses subqueries to avoid GROUP BY issues
+        if (dto.include === SideloadOption.LOCUS_MEMBERS && role === UserRole.ADMIN) {
+            qb.leftJoinAndSelect('rl.locusMembers', 'rlm');
+        }
+
         this.applyFilters(qb, dto, role);
         this.applySortAndPagination(qb, dto);
 
         const [data, total] = await qb.getManyAndCount();
 
         if (dto.include !== SideloadOption.LOCUS_MEMBERS) {
-            data.forEach((row) => {
-                delete (row as any).locusMembers;
-            });
+            data.forEach((row) => delete (row as any).locusMembers);
         }
 
         const limit = Math.min(dto.limit ?? 1000, 1000);
         return { data, total, page: dto.page ?? 1, limit };
-    }
-
-    private needsMemberJoin(dto: LocusQueryDto, role: UserRole): boolean {
-        return (
-            role === UserRole.LIMITED ||
-            dto.include === SideloadOption.LOCUS_MEMBERS ||
-            !!dto.membershipStatus ||
-            (Array.isArray(dto.regionId) && dto.regionId.length > 0)
-        );
-    }
-
-    private applyJoins(qb: SelectQueryBuilder<RncLocus>, dto: LocusQueryDto, role: UserRole) {
-        if (!this.needsMemberJoin(dto, role)) return;
-
-        if (dto.include === SideloadOption.LOCUS_MEMBERS && role === UserRole.ADMIN) {
-            qb.leftJoinAndSelect('rl.locusMembers', 'rlm');
-        } else {
-            qb.leftJoin('rl.locusMembers', 'rlm');
-        }
     }
 
     private applyFilters(qb: SelectQueryBuilder<RncLocus>, dto: LocusQueryDto, role: UserRole) {
@@ -72,22 +56,27 @@ export class LocusService {
             qb.andWhere('rl.assemblyId = :assemblyId', { assemblyId: dto.assemblyId });
         }
 
+        // filter by regionId via subquery — avoids JOIN + GROUP BY duplicate row problem
         if (Array.isArray(dto.regionId) && dto.regionId.length > 0) {
-            qb.andWhere('rlm.regionId IN (:...regionIds)', { regionIds: dto.regionId });
+            qb.andWhere(
+                'rl.id IN (SELECT lm.locus_id FROM rnc_locus_members lm WHERE lm.region_id IN (:...regionIds))',
+                { regionIds: dto.regionId },
+            );
         }
 
         if (dto.membershipStatus) {
-            qb.andWhere('rlm.membershipStatus = :membershipStatus', {
-                membershipStatus: dto.membershipStatus,
-            });
+            qb.andWhere(
+                'rl.id IN (SELECT lm.locus_id FROM rnc_locus_members lm WHERE lm.membership_status = :membershipStatus)',
+                { membershipStatus: dto.membershipStatus },
+            );
         }
 
+        // limited role: always restrict to allowed region IDs
         if (role === UserRole.LIMITED) {
-            qb.andWhere('rlm.regionId IN (:...allowed)', { allowed: LIMITED_REGION_IDS });
-        }
-
-        if (this.needsMemberJoin(dto, role) && dto.include !== SideloadOption.LOCUS_MEMBERS) {
-            qb.groupBy('rl.id');
+            qb.andWhere(
+                'rl.id IN (SELECT lm.locus_id FROM rnc_locus_members lm WHERE lm.region_id IN (:...allowed))',
+                { allowed: LIMITED_REGION_IDS },
+            );
         }
     }
 

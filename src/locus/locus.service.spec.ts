@@ -79,15 +79,20 @@ describe('LocusService', () => {
             expect(qb.andWhere).toHaveBeenCalledWith('rl.assemblyId = :assemblyId', expect.any(Object));
         });
 
-        it('joins and filters by regionId', async () => {
+        it('filters regionId via subquery', async () => {
             await service.getLocus({ ...base, regionId: [86118093] }, UserRole.ADMIN);
-            expect(qb.leftJoin).toHaveBeenCalled();
-            expect(qb.andWhere).toHaveBeenCalledWith('rlm.regionId IN (:...regionIds)', expect.any(Object));
+            expect(qb.andWhere).toHaveBeenCalledWith(
+                expect.stringContaining('lm.region_id IN (:...regionIds)'),
+                expect.any(Object),
+            );
         });
 
-        it('applies membershipStatus filter', async () => {
+        it('filters membershipStatus via subquery', async () => {
             await service.getLocus({ ...base, membershipStatus: 'member' }, UserRole.ADMIN);
-            expect(qb.andWhere).toHaveBeenCalledWith('rlm.membershipStatus = :membershipStatus', expect.any(Object));
+            expect(qb.andWhere).toHaveBeenCalledWith(
+                expect.stringContaining('lm.membership_status = :membershipStatus'),
+                expect.any(Object),
+            );
         });
     });
 
@@ -105,17 +110,17 @@ describe('LocusService', () => {
     });
 
     describe('limited', () => {
-        it('always joins rnc_locus_members', async () => {
-            await service.getLocus(base, UserRole.LIMITED);
-            expect(qb.leftJoin).toHaveBeenCalled();
-        });
-
-        it('restricts to allowed region IDs', async () => {
+        it('restricts to allowed region IDs via subquery', async () => {
             await service.getLocus(base, UserRole.LIMITED);
             expect(qb.andWhere).toHaveBeenCalledWith(
-                'rlm.regionId IN (:...allowed)',
+                expect.stringContaining('lm.region_id IN (:...allowed)'),
                 { allowed: [86118093, 86696489, 88186467] },
             );
+        });
+
+        it('does not use join for filtering', async () => {
+            await service.getLocus(base, UserRole.LIMITED);
+            expect(qb.leftJoin).not.toHaveBeenCalled();
         });
     });
 
